@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cast Your Vote</title>
+    <script src="https://cdn.jsdelivr.net/npm/web3@4.0.1/dist/web3.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .container {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        #message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .candidate {
+            padding: 10px;
+            margin: 10px 0;
+            background-color: white;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .votes {
+            font-weight: bold;
+            float: right;
+        }
+    </style>
+</head>
+<body>
+    <h1>Cast Your Vote</h1>
+    
+    <div class="container">
+        <h2>Connection Status</h2>
+        <div id="status">Connecting to blockchain...</div>
+        <div id="account"></div>
+    </div>
+    
+    <div class="container">
+        <h2>Candidates</h2>
+        <div id="candidates">Loading candidates...</div>
+    </div>
+    
+    <div class="container">
+        <a href="/" style="display: block; text-align: center; margin-top: 20px; color: #3498db; text-decoration: none;">
+            ← Back to Results
+        </a>
+    </div>
+    
+    <div id="message"></div>
+    
+    <script>
+        // Contract details
+        const contractAddress = '0xfD6C96c92bb1706dcce7E287C13A2Fc16693D293';
+        const contractABI = [
+            {
+                "inputs": [{"internalType": "string[]","name": "candidateNames","type": "string[]"}],
+                "stateMutability": "nonpayable",
+                "type": "constructor"
+            },
+            {
+                "inputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+                "name": "candidateList",
+                "outputs": [{"internalType": "string","name": "","type": "string"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address","name": "","type": "address"}],
+                "name": "voters",
+                "outputs": [{"internalType": "bool","name": "","type": "bool"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "string","name": "","type": "string"}],
+                "name": "votesReceived",
+                "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "string","name": "candidate","type": "string"}],
+                "name": "voteForCandidate",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "string","name": "candidate","type": "string"}],
+                "name": "totalVotesFor",
+                "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "string","name": "candidate","type": "string"}],
+                "name": "isValidCandidate",
+                "outputs": [{"internalType": "bool","name": "","type": "bool"}],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ];
+        
+        // Global variables
+        let web3;
+        let votingContract;
+        let currentAccount;
+        let candidates = [];
+        let hasVoted = false;
+        
+        // DOM elements
+        const statusElement = document.getElementById('status');
+        const accountElement = document.getElementById('account');
+        const candidatesElement = document.getElementById('candidates');
+        const messageElement = document.getElementById('message');
+        
+        // Initialize the application
+        async function init() {
+            try {
+                // Connect to local Ganache
+                web3 = new Web3('http://localhost:7545');
+                statusElement.textContent = 'Connected to local Ethereum network (Ganache)';
+                statusElement.style.color = 'green';
+                
+                // Initialize contract
+                votingContract = new web3.eth.Contract(contractABI, contractAddress);
+                
+                // Get current account
+                const accounts = await web3.eth.getAccounts();
+                currentAccount = accounts[0];
+                accountElement.textContent = `Account: ${currentAccount}`;
+                
+                // Check if user has already voted
+                hasVoted = await votingContract.methods.voters(currentAccount).call();
+                
+                // Load candidates
+                await loadCandidates();
+                
+            } catch (error) {
+                showMessage(`Initialization error: ${error.message}`, 'error');
+                console.error('Initialization error:', error);
+            }
+        }
+        
+        // Load candidates from the contract
+        async function loadCandidates() {
+            try {
+                candidatesElement.innerHTML = 'Loading candidates...';
+                
+                // Get candidates from contract
+                candidates = await getCandidateList();
+                
+                if (candidates.length === 0) {
+                    candidatesElement.innerHTML = '<p>No candidates found.</p>';
+                    return;
+                }
+                
+                // Display candidates
+                let candidatesHTML = '';
+                for (const candidate of candidates) {
+                    candidatesHTML += `
+                        <div class="candidate">
+                            <span>${candidate}</span>
+                            <button onclick="vote('${candidate}')" ${hasVoted ? 'disabled' : ''}>
+                                ${hasVoted ? 'Already Voted' : 'Vote'}
+                            </button>
+                        </div>
+                    `;
+                }
+                
+                candidatesElement.innerHTML = candidatesHTML;
+            } catch (error) {
+                candidatesElement.innerHTML = `<p>Error loading candidates: ${error.message}</p>`;
+                console.error('Error loading candidates:', error);
+            }
+        }
+        
+        // No results function needed
+        
+        // Get the list of candidates from the contract
+        async function getCandidateList() {
+            try {
+                let index = 0;
+                const candidatesList = [];
+                
+                // Keep trying to get candidates until we get an error
+                while (true) {
+                    try {
+                        const candidate = await votingContract.methods.candidateList(index).call();
+                        candidatesList.push(candidate);
+                        index++;
+                    } catch (error) {
+                        // We've reached the end of the list
+                        break;
+                    }
+                }
+                
+                return candidatesList;
+            } catch (error) {
+                console.error('Error getting candidate list:', error);
+                throw error;
+            }
+        }
+        
+        // Vote for a candidate
+        async function vote(candidate) {
+            try {
+                if (hasVoted) {
+                    showMessage('You have already voted!', 'error');
+                    return;
+                }
+                
+                showMessage('Processing your vote...', 'info');
+                
+                await votingContract.methods.voteForCandidate(candidate).send({ from: currentAccount });
+                
+                hasVoted = true;
+                showMessage(`Successfully voted for ${candidate}!`, 'success');
+                
+                // Update UI
+                await loadCandidates();
+            } catch (error) {
+                showMessage(`Error voting: ${error.message}`, 'error');
+                console.error('Error voting:', error);
+            }
+        }
+        
+        // Get total votes for a candidate
+        async function getTotalVotesFor(candidate) {
+            try {
+                const votes = await votingContract.methods.totalVotesFor(candidate).call();
+                return votes;
+            } catch (error) {
+                console.error(`Error getting votes for ${candidate}:`, error);
+                throw error;
+            }
+        }
+        
+        // Show message to the user
+        function showMessage(message, type) {
+            messageElement.textContent = message;
+            messageElement.className = type;
+            messageElement.style.display = 'block';
+            
+            // Clear message after 5 seconds if it's a success message
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageElement.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        // Make vote function available globally
+        window.vote = vote;
+        
+        // Initialize the application when the page loads
+        window.onload = init;
+    </script>
+</body>
+</html>
